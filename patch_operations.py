@@ -1,4 +1,4 @@
-# patch transformations
+# window transformations
 
 import torch
 import torch.nn as nn
@@ -31,16 +31,16 @@ class PatchMerge(nn.Module):
 
         x = x.view(B, D, H, W, C)
 
-        x0 = x[:, 0::2, 0::2, 0::2, :]  # B H/2 W/2 D/2 C
-        x1 = x[:, 1::2, 0::2, 0::2, :]  # B H/2 W/2 D/2 C
-        x2 = x[:, 0::2, 1::2, 0::2, :]  # B H/2 W/2 D/2 C
-        x3 = x[:, 1::2, 1::2, 0::2, :]  # B H/2 W/2 D/2 C
-        x4 = x[:, 0::2, 0::2, 1::2, :]  # B H/2 W/2 D/2 C
-        x5 = x[:, 1::2, 0::2, 1::2, :]  # B H/2 W/2 D/2 C
-        x6 = x[:, 0::2, 1::2, 1::2, :]  # B H/2 W/2 D/2 C
-        x7 = x[:, 1::2, 1::2, 1::2, :]  # B H/2 W/2 D/2 C
-        x = torch.cat([x0, x1, x2, x3, x4, x5, x6, x7], -1)  # B H/2 W/2 D/2 8*C
-        x = x.view(B, -1, 8 * C)  # B H/2*W/2*D/2 8*C
+        x0 = x[:, 0::2, 0::2, 0::2, :]  # B D/2 H/2 W/2 C
+        x1 = x[:, 1::2, 0::2, 0::2, :]  # B D/2 H/2 W/2 C
+        x2 = x[:, 0::2, 1::2, 0::2, :]  # B D/2 H/2 W/2 C
+        x3 = x[:, 1::2, 1::2, 0::2, :]  # B D/2 H/2 W/2 C
+        x4 = x[:, 0::2, 0::2, 1::2, :]  # B D/2 H/2 W/2 C
+        x5 = x[:, 1::2, 0::2, 1::2, :]  # B D/2 H/2 W/2 C
+        x6 = x[:, 0::2, 1::2, 1::2, :]  # B D/2 H/2 W/2 C
+        x7 = x[:, 1::2, 1::2, 1::2, :]  # B D/2 H/2 W/2 C
+        x = torch.cat([x0, x1, x2, x3, x4, x5, x6, x7], -1)  # B D/2 H/2 W/2 8*C
+        x = x.view(B, -1, 8 * C)  # B D/2*H/2*W/2 8*C
 
         x = self.norm(x)
         x = self.reduction(x)
@@ -50,7 +50,7 @@ class PatchMerge(nn.Module):
 
 class PatchExpand(nn.Module):
     """
-    Expands each patch by a factor of 2 in each dimension and halves the number of channels
+    Expands each patch by a factor of 2 in each dimension and the number of channels is reduced to 1/4
     """
     def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
         super().__init__()
@@ -66,6 +66,7 @@ class PatchExpand(nn.Module):
         D, H, W = self.input_resolution
         x = self.expand(x)
         B, L, C = x.shape
+
         assert L == D * H * W, "input feature has wrong size"
 
         x = x.view(B, D, H, W, C)
@@ -73,5 +74,40 @@ class PatchExpand(nn.Module):
         x = x.view(B,-1,C//8)
         
         x = self.norm(x)
+
+        return x
+
+
+class FinalPatchExpand(nn.Module):
+    """
+    Expands each patch by a factor of initial patch size in and keeps the dimensions
+    """
+    def __init__(self, input_resolution, patch_size, dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.expand = nn.Linear(dim, (patch_size**3)*dim, bias=False)
+        self.norm = norm_layer(dim)
+        self.patch_size = patch_size
+
+    def forward(self, x):
+        """
+        x: B, L, C
+        """
+        D, H, W = self.input_resolution
+        x = self.expand(x)
+        B, L, C = x.shape
+
+        assert L == D * H * W, "input feature has wrong size"
+
+        x = x.view(B, D, H, W, C)
+        x = rearrange(
+            x, 'b d h w (p1 p2 p3 c)-> b (d p1) (h p2) (w p3) c', 
+            p1=self.patch_size, p2=self.patch_size, p3=self.patch_size, c=self.dim
+        )
+        x = x.view(B,-1,self.dim)
+        
+        x = self.norm(x)
+        x = x.view(B, D*self.patch_size, H*self.patch_size, W*self.patch_size, self.dim)
 
         return x
