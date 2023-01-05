@@ -109,5 +109,6 @@ class FinalPatchExpand(nn.Module):
         
         x = self.norm(x)
         x = x.view(B, D*self.patch_size, H*self.patch_size, W*self.patch_size, self.dim)
+        x = x.permute(0, 4, 1, 2, 3).contiguous()
 
         return x
