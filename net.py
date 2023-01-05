@@ -1,5 +1,6 @@
 # volumetric transformer network
 
+import torch
 import torch.nn as nn
 from embed import Embedding
 from blocks import BasicBlock_down, BasicBlock_up
@@ -46,7 +47,13 @@ class VolumetricTransformerNet(nn.Module):
             self.layers_down.append(layer)
 
         self.layers_up = nn.ModuleList()
+        self.concat_back_dim = nn.ModuleList()
         for i_layer in range(self.num_layers):
+            concat_linear = nn.Linear(
+                2*int(self.dim*4**(self.num_layers-1-i_layer)),
+                int(self.dim*4**(self.num_layers-1-i_layer))
+            ) if i_layer > 0 else nn.Identity()
+
             if i_layer == 0:
                 layer = PatchExpand(
                     input_resolution=(
@@ -66,6 +73,7 @@ class VolumetricTransformerNet(nn.Module):
                                       window_size=window_size,
                                       upsample=True if (i_layer < self.num_layers - 1) else False)
             self.layers_up.append(layer)
+            self.concat_back_dim.append(concat_linear)
 
         self.final_expand = FinalPatchExpand(
             input_resolution=(patches_resolution[0],patches_resolution[1],patches_resolution[2]),
@@ -79,13 +87,20 @@ class VolumetricTransformerNet(nn.Module):
     def forward(self, x):
         x = self.embed(x)
 
+        x_downsample = []
         for layer_down in self.layers_down:
+            x_downsample.append(x)
             x = layer_down(x)
 
         x = self.norm1(x)
 
-        for layer_up in self.layers_up:
-            x = layer_up(x)
+        for i, layer_up in enumerate(self.layers_up):
+            if i == 0:
+                x = layer_up(x)
+            else:
+                x = torch.cat([x,x_downsample[(self.num_layers-1)-i]],-1)
+                x = self.concat_back_dim[i](x)
+                x = layer_up(x)
 
         x = self.norm2(x)
 
